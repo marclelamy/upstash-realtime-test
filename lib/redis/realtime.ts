@@ -15,6 +15,7 @@ const schema = {
                 messageId: z.string(),
                 sequenceId: z.number(),
                 content: z.string().optional(),
+                serverSentAt: z.number().optional(),
             })
         })
     }
