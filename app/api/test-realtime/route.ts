@@ -21,20 +21,26 @@ function percentile(values: number[], p: number): number {
 }
 
 export async function POST(req: NextRequest) {
-    const { channelId, count, minSize, maxSize } = await req.json()
+    const {
+        channelId,
+        count,
+        minSize,
+        maxSize,
+        awaitEachEmit = true,
+    } = await req.json()
 
     const channel = realtime.channel(`generate:${channelId}`)
     const sizes: number[] = []
     const emitDurationsMs: number[] = []
     const startedAt = Date.now()
+    const shouldAwaitEachEmit = awaitEachEmit !== false
 
     for (let i = 0; i < count; i++) {
         const content = generatePayload(Math.floor(Math.random() * (maxSize - minSize + 1)) + minSize)
         const emitStartedAt = Date.now()
 
-        const startTime = Date.now()
         console.log('emitting new chunk', ' ', 'chunk count', i)
-        await channel.emit('generate.event', {
+        const emitPromise = channel.emit('generate.event', {
             type: 'content',
             data: {
                 messageId: channelId,
@@ -43,17 +49,22 @@ export async function POST(req: NextRequest) {
                 serverSentAt: Date.now(),
             }
         })
-        const endTime = Date.now()
-        console.log('emitting new chunk', ' ', 'chunk count', i, 'time taken', endTime - startTime)
 
-        emitDurationsMs.push(Date.now() - emitStartedAt)
+        if (shouldAwaitEachEmit) {
+            await emitPromise
+            const duration = Date.now() - emitStartedAt
+            console.log('emitting new chunk', ' ', 'chunk count', i, 'time taken', duration)
+            emitDurationsMs.push(duration)
+        } else {
+            void emitPromise
+        }
     }
 
     await channel.emit('generate.event', {
         type: 'complete',
         data: {
             messageId: channelId,
-            sequenceId: sizes.length + 1,
+            sequenceId: count + 1,
             serverSentAt: Date.now(),
         }
     })
@@ -67,6 +78,8 @@ export async function POST(req: NextRequest) {
         ok: true,
         channelId,
         sizes,
+        expectedCount: count + 1,
+        mode: shouldAwaitEachEmit ? 'await' : 'no-await',
         metrics: {
             totalMs,
             avgEmitMs: Number(avgEmitMs.toFixed(2)),

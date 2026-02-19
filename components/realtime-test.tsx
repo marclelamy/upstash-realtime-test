@@ -31,11 +31,15 @@ type ServerMetrics = {
     p95EmitMs: number
 }
 
+type RunMode = 'await' | 'no-await'
+
 export function RealtimeTest() {
     const [channelId, setChannelId] = useState<string | null>(null)
     const [chunks, setChunks] = useState<ReceivedChunk[]>([])
     const [sending, setSending] = useState(false)
     const [sentSizes, setSentSizes] = useState<number[]>([])
+    const [expectedCount, setExpectedCount] = useState(0)
+    const [lastRunMode, setLastRunMode] = useState<RunMode>('await')
     const [serverMetrics, setServerMetrics] = useState<ServerMetrics | null>(null)
     const arrivalCounter = useRef(0)
     const lastChunkTimestampRef = useRef<number | null>(null)
@@ -75,13 +79,15 @@ export function RealtimeTest() {
         onData: handleData,
     })
 
-    const runTest = async () => {
+    const runTest = async (mode: RunMode) => {
         const id = uuidv4()
         arrivalCounter.current = 0
         lastChunkTimestampRef.current = null
         setChunks([])
         setSentSizes([])
+        setExpectedCount(0)
         setServerMetrics(null)
+        setLastRunMode(mode)
         setChannelId(id)
         setSending(true)
 
@@ -95,6 +101,7 @@ export function RealtimeTest() {
                     minSize: 1,
                     maxSize: 5000,
                     delayMs: 0,
+                    awaitEachEmit: mode === 'await',
                 }),
             })
 
@@ -104,6 +111,7 @@ export function RealtimeTest() {
 
             const result = await res.json()
             setSentSizes(Array.isArray(result.sizes) ? result.sizes : [])
+            setExpectedCount(typeof result.expectedCount === 'number' ? result.expectedCount : 0)
             setServerMetrics(result.metrics ?? null)
         } finally {
             setSending(false)
@@ -114,9 +122,11 @@ export function RealtimeTest() {
         i === 0 || c.sequenceId > chunks[i - 1].sequenceId
     )
     const receivedIds = new Set(chunks.map(c => c.sequenceId))
-    const expectedCount = sentSizes.length > 0 ? sentSizes.length + 1 : 0
+    const expectedTotal = expectedCount > 0
+        ? expectedCount
+        : (sentSizes.length > 0 ? sentSizes.length + 1 : 0)
     const missingIds: number[] = []
-    for (let i = 1; i <= expectedCount; i++) {
+    for (let i = 1; i <= expectedTotal; i++) {
         if (!receivedIds.has(i)) missingIds.push(i)
     }
     const sequenceCounts = new Map<number, number>()
@@ -148,22 +158,31 @@ export function RealtimeTest() {
     return (
         <div className="p-8 max-w-5xl mx-auto font-mono text-sm">
             <h1 className="text-2xl font-bold mb-2">Upstash Realtime — Out-of-Order & Dropped Event Repro</h1>
-            <p className="text-zinc-500 mb-6">100 events · 1–5000 chars · 0ms delay · sequential await emit</p>
+            <p className="text-zinc-500 mb-6">100 events · 1–5000 chars · 0ms delay · last mode: {lastRunMode}</p>
 
-            <button
-                onClick={runTest}
-                disabled={sending}
-                className="mb-8 px-5 py-2.5 rounded-lg bg-black text-white text-sm font-medium disabled:opacity-50 hover:bg-zinc-800 transition-colors"
-            >
-                {sending ? 'Sending...' : 'Run Test (100 events, 1–5K chars, 0ms delay)'}
-            </button>
+            <div className="mb-8 flex flex-wrap gap-3">
+                <button
+                    onClick={() => runTest('await')}
+                    disabled={sending}
+                    className="px-5 py-2.5 rounded-lg bg-black text-white text-sm font-medium disabled:opacity-50 hover:bg-zinc-800 transition-colors"
+                >
+                    {sending ? 'Sending...' : 'Run With Await (ordered, slower)'}
+                </button>
+                <button
+                    onClick={() => runTest('no-await')}
+                    disabled={sending}
+                    className="px-5 py-2.5 rounded-lg bg-zinc-700 text-white text-sm font-medium disabled:opacity-50 hover:bg-zinc-600 transition-colors"
+                >
+                    {sending ? 'Sending...' : 'Run Without Await (faster, unordered)'}
+                </button>
+            </div>
 
             {chunks.length > 0 && (
                 <div>
                     <div className="mb-4 flex flex-wrap gap-4">
                         <div className="rounded-lg border border-zinc-200 px-4 py-3">
                             <div className="text-xs text-zinc-400 mb-1">Expected</div>
-                            <div className="text-xl font-bold">{expectedCount}</div>
+                            <div className="text-xl font-bold">{expectedTotal}</div>
                         </div>
                         <div className="rounded-lg border border-zinc-200 px-4 py-3">
                             <div className="text-xs text-zinc-400 mb-1">Received</div>
